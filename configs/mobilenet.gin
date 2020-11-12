@@ -1,0 +1,17 @@
+# Model
+train.model='MobileNet'
+
+
+# Train configuration
+train.batch_size=128
+train.callbacks=['lr_schedule', 'meta_saver']
+LRSchedule.schedule=[[20, 0.1], [50, 0.05], [80, 0.001]]
+LRSchedule.base_lr=1
+# Training loop
+training_loop.n_epochs=70
+training_loop.use_neptune=True
+
+# Dataset
+get_dataset.dataset='mnist'
+get_dataset.seed=777
+mnist.use_valid=True

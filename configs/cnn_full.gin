@@ -1,0 +1,19 @@
+# Model
+train.model="SimpleCNN"
+SimpleCNN.n_filters = 32
+SimpleCNN.n_dense = 128
+
+
+# Train configuration
+train.batch_size=256
+train.callbacks=['lr_schedule', 'meta_saver']
+LRSchedule.schedule=[[30, 0.1], [1000, 0.005]]
+LRSchedule.base_lr=1
+# Training loop
+training_loop.n_epochs=150
+training_loop.use_neptune=True
+
+# Dataset
+get_dataset.dataset='mnist'
+get_dataset.seed=777
+mnist.use_valid=True
