@@ -10,6 +10,7 @@ import torch
 import logging
 import os
 import json
+import collections
 
 import torch
 import pytorch_lightning as pl
@@ -24,31 +25,47 @@ from bin.train_supervised import *
 
 import argh
 
-def evaluate(save_path, checkpoint_name="weights.ckpt"):
+def calculate_acc(weights, meta_data, config, train, valid, test):
+    model = models.__dict__[config['train.model']]()
+    model.load_state_dict(weights)
+    pl_module = SupervisedLearning(model, meta_data=meta_data)
+
+    trainer = pl.Trainer()
+    # results_test, = trainer.test(model=pl_module, test_dataloaders=test)
+    # results_valid, = trainer.test(model=pl_module, test_dataloaders=valid)
+    results_train, = trainer.test(model=pl_module, test_dataloaders=train)
+    # print(results_train)
+    # print(results_test, results_valid, results_train)
+
+def combine_weights(weights_init, weights_final, config, step=0.1):
+    train, valid, test, meta_data = get_dataset(batch_size=config['train.batch_size'], seed=config['train.seed'])
+
+    freq = 0.0
+    while freq <= 1:
+        weights_temp = collections.OrderedDict()
+        for k, v in weights_init.items():
+            # it should add at the end, but i am not sure of that so i am calling it manually
+            weights_temp[k] = (1-freq) * weights_init[k] + freq * weights_final[k]
+            weights_temp.move_to_end(k)
+        print("freq: {}". format(freq))
+        calculate_acc(weights_temp, meta_data, config, train, valid, test)
+        freq += step
+
+def evaluate(save_path):
     # Load config
     config = parse_gin_config(os.path.join(save_path, "config.gin"))
     gin.parse_config_files_and_bindings([os.path.join(os.path.join(save_path, "config.gin"))], bindings=[""])
 
-    # Create dynamically dataset generators
-    train, valid, test, meta_data = get_dataset(batch_size=config['train.batch_size'], seed=config['train.seed'])
-
     # Load model (a bit hacky, but necessary because load_from_checkpoint seems to fail)
-    ckpt_path = os.path.join(save_path, checkpoint_name)
-    ckpt = torch.load(ckpt_path)
-    model = models.__dict__[config['train.model']]()
-    summary(model)
-    pl_module = SupervisedLearning(model, lr=0.0)
-    pl_module.load_state_dict(ckpt['state_dict'])
+    weights_init = torch.load(os.path.join(save_path, "initial0.pth"))
+    weights_best_val = torch.load(os.path.join(save_path, "best_valid_acc49.pth"))
+    weights_best_train = torch.load(os.path.join(save_path, "final61.pth"))
+    
+    combine_weights(weights_init, weights_best_val, config)
+    # combine_weights(weights_init, weights_best_train, config)
+    # with open(os.path.join(save_path, "eval_results_{}.json".format(checkpoint_name)), "w") as f:
+    #     json.dump(results, f)
 
-    # NOTE: This fails, probably due to a bug in Pytorch Lightning. The above is manually doing something similar
-    # ckpt_path = os.path.join(save_path, checkpoint_name)
-    # pl_module = SupervisedLearning.load_from_checkpoint(ckpt_path)
-
-    trainer = pl.Trainer()
-    results, = trainer.test(model=pl_module, test_dataloaders=test, ckpt_path=ckpt_path)
-    logger.info(results)
-    with open(os.path.join(save_path, "eval_results_{}.json".format(checkpoint_name)), "w") as f:
-        json.dump(results, f)
 
 if __name__ == "__main__":
     argh.dispatch_command(evaluate)
