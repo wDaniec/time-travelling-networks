@@ -34,9 +34,7 @@ def train(save_path, model, batch_size=128, seed=777, callbacks=[], resume=True,
     # Create dynamically callbacks
     callbacks_constructed = []
     for name in callbacks:
-        print("tutej!", name)
         clbk = get_callback(name, verbose=0)
-        print(clbk)
         if clbk is not None:
             callbacks_constructed.append(clbk)
 
