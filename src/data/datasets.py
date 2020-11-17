@@ -54,11 +54,12 @@ def mnist(use_valid, seed=777, stream_seed=777, batch_size=128):
         N_valid = int(len(trainval) * 0.1)
         ids_train, ids_val = ids[0:-N_valid], ids[-N_valid:]
         train, valid = Subset(trainval, ids_train), Subset(trainval, ids_val)
-        print("size of training/validation set: ", len(train), len(valid))
         assert len(valid) == int(0.1 * len(trainval)) and len(train) == int(0.9 * len(trainval))
     else:
         train, valid = trainval, test
 
+    
+    print("size of training/validation/test set: ", len(train), len(valid), len(test))
     train = TransformedDataset(train, transform=transform_train)
     test = TransformedDataset(test, transform=transform_test)
     valid = TransformedDataset(valid, transform=transform_test)

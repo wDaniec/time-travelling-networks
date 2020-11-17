@@ -35,12 +35,12 @@ def calculate_acc(weights, meta_data, config, train, valid, test):
     results_test, = trainer.test(model=pl_module, test_dataloaders=test)
     results_valid, = trainer.test(model=pl_module, test_dataloaders=valid)
     results_train, = trainer.test(model=pl_module, test_dataloaders=train)
+    print(results_test, results_valid, results_train)
     monitor = 'valid_acc'
     return {'train': results_train[monitor], 'valid': results_valid[monitor], 'test': results_test[monitor]}
 
-def combine_weights(weights_init, weights_final, config, step=0.5):
+def combine_weights(weights_init, weights_final, config, step=0.05):
     train, valid, test, meta_data = get_dataset(batch_size=config['train.batch_size'], seed=config['train.seed'])
-
     results = {'freq': [], 'train':[], 'valid':[], 'test':[]}
     num_steps = int(1/step)
     print("step_size: {step}  | num_of_steps: {num_steps}")
@@ -81,9 +81,9 @@ def evaluate(save_path, exp_name):
     else:
         raise Error("There already exists a folder with this name")
 
-    weights_init = torch.load(os.path.join(save_path, "initial0.pth"))
-    weights_val = torch.load(os.path.join(save_path, "best_valid_acc49.pth"))
-    weights_final = torch.load(os.path.join(save_path, "final61.pth"))
+    weights_init = torch.load(os.path.join(save_path, "initial.pth"))
+    weights_val = torch.load(os.path.join(save_path, "best_valid_acc81.pth"))
+    weights_final = torch.load(os.path.join(save_path, "final143.pth"))
     
 
     results_val = combine_weights(weights_init, weights_val, config)

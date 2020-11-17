@@ -40,7 +40,7 @@ class EarlyStopCheckpoint(Callback):
 
 
     def on_train_start(self, trainer, pl_module):
-        model_path = os.path.join(self.path, "initial{}.pth".format(trainer.current_epoch))
+        model_path = os.path.join(self.path, "initial.pth".format(trainer.current_epoch))
         torch.save(pl_module.model.state_dict(), model_path)
     
 

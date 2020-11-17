@@ -26,6 +26,11 @@ def train(save_path, model, batch_size=128, seed=777, callbacks=[], resume=True,
     # Create dynamically dataset generators
     train, valid, test, meta_data = get_dataset(batch_size=batch_size, seed=seed)
 
+
+    for x in train:
+        print(x)
+        break
+    
     # Create dynamically model
     model = models.__dict__[model]()
     # print(model)
@@ -45,17 +50,17 @@ def train(save_path, model, batch_size=128, seed=777, callbacks=[], resume=True,
     callbacks_constructed.append(
         EarlyStopCheckpoint(
             path=save_path,
-            patience=5,
-            patience_train=40,
+            patience=10,
+            patience_train=100,
             start=25,
-            delta = 0.02
+            delta = 0.005
         )
     )
 
     callbacks_constructed.append(
         EarlyStopping(
             monitor='train_acc',
-            patience=40,
+            patience=100,
             mode='max'
         )
     )

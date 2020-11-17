@@ -5,12 +5,12 @@ SimpleCNN.n_dense = 128
 
 
 # Train configuration
-train.batch_size=256
+train.batch_size=64
 train.callbacks=['lr_schedule', 'meta_saver']
-LRSchedule.schedule=[[30, 0.1], [1000, 0.005]]
+LRSchedule.schedule=[[100, 0.05], [1000, 0.0005]]
 LRSchedule.base_lr=1
 # Training loop
-training_loop.n_epochs=150
+training_loop.n_epochs=300
 training_loop.use_neptune=True
 
 # Dataset
