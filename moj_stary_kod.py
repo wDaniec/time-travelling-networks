@@ -6,7 +6,6 @@ import torch.nn.functional as F
 import numpy as np
 import torchvision
 from torchvision import datasets, models, transforms
-import matplotlib.pyplot as plt
 import time
 import os
 import math
@@ -19,19 +18,19 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 torch.manual_seed(0)
 
-BATCH_SIZE = 92
+BATCH_SIZE = 128
 DATASET = "Cifar"
 TRAIN_NAME = "Cifar_full"
 # PATH = "./lilImageNet/best_model_199.pth"
 SEND_NEPTUNE = True
 OUT_SIZE = 10
 CIFAR_FACTOR = 1
-PATIENCE = 20
+PATIENCE = 50
 NUM_EPOCHS = 500
 WEIGHT_DECAY = 0.00004
 MOMENTUM = 0.9
 LEARNING_RATE = 0.1
-MILESTONES = [150, 225]
+MILESTONES = [50, 110, 250]
 
 if SEND_NEPTUNE:
     neptune.init('andrzejzdobywca/pretrainingpp')
@@ -136,7 +135,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 patience = PATIENCE
                 best_acc = epoch_acc
                 best_model_wts = copy.deepcopy(model.state_dict())
-                torch.save(best_model_wts, "./{}/best_val.pth".format(TRAIN_NAME, epoch))
+                torch.save(best_model_wts, "./{}/best_valid.pth".format(TRAIN_NAME, epoch))
         torch.save(model.state_dict(), "./{}/{}.pth".format(TRAIN_NAME, "final"))
         print(time.time() - start)
         print()
