@@ -39,7 +39,7 @@ def calculate_acc(weights, meta_data, config, train, valid, test):
     monitor = 'valid_acc'
     return {'train': results_train[monitor], 'valid': results_valid[monitor], 'test': results_test[monitor]}
 
-def combine_weights(weights_init, weights_final, config, step=0.05):
+def combine_weights(weights_init, weights_final, config, step=1):
     train, valid, test, meta_data = get_dataset(batch_size=config['train.batch_size'], seed=config['train.seed'])
     results = {'freq': [], 'train':[], 'valid':[], 'test':[]}
     num_steps = int(1/step)
@@ -83,7 +83,7 @@ def evaluate(save_path, exp_name):
 
     weights_init = torch.load(os.path.join(save_path, "initial.pth"))
     weights_val = torch.load(os.path.join(save_path, "best_valid_acc81.pth"))
-    weights_final = torch.load(os.path.join(save_path, "final143.pth"))
+    weights_final = torch.load(os.path.join(save_path, "final103.pth"))
     
 
     results_val = combine_weights(weights_init, weights_val, config)

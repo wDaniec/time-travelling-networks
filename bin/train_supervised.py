@@ -50,20 +50,20 @@ def train(save_path, model, batch_size=128, seed=777, callbacks=[], resume=True,
     callbacks_constructed.append(
         EarlyStopCheckpoint(
             path=save_path,
-            patience=10,
+            patience=4,
             patience_train=100,
             start=25,
             delta = 0.005
         )
     )
 
-    callbacks_constructed.append(
-        EarlyStopping(
-            monitor='train_acc',
-            patience=100,
-            mode='max'
-        )
-    )
+    # callbacks_constructed.append(
+    #     EarlyStopping(
+    #         monitor='train_acc',
+    #         patience=100,
+    #         mode='max'
+    #     )
+    # )
 
     # Create module and pass to training
     checkpoint_callback = ModelCheckpoint(
