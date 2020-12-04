@@ -20,13 +20,13 @@ torch.manual_seed(0)
 
 BATCH_SIZE = 128
 DATASET = "Cifar"
-TRAIN_NAME = "Cifar_full"
+TRAIN_NAME = "fatality1"
 # PATH = "./lilImageNet/best_model_199.pth"
 SEND_NEPTUNE = True
 OUT_SIZE = 10
 CIFAR_FACTOR = 1
-PATIENCE = 50
-NUM_EPOCHS = 500
+PATIENCE = 2
+NUM_EPOCHS = 30
 WEIGHT_DECAY = 0.00004
 MOMENTUM = 0.9
 LEARNING_RATE = 0.1
@@ -70,8 +70,10 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
     torch.save(model.state_dict(), "./{}/initial.pth".format(TRAIN_NAME))
     since = time.time()
 
-    best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = 0.0
+    best_epoch = 0
+    best_acc_es = 0
+    best_epoch_es = 0
     patience = PATIENCE
     finished = False
 
@@ -96,7 +98,11 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 
             # Iterate over data.
             for idx, (inputs, labels) in enumerate(dataloaders[phase]):
-#                 print(idx, len(dataloaders[phase]))
+                #debug
+                if idx == 15:
+                    break
+                #enddebug
+                # print(idx, len(dataloaders[phase]))
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
@@ -131,11 +137,17 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 neptune.send_metric('{}_acc'.format(phase), epoch_acc)
 
             # deep copy the model
-            if phase == 'val' and epoch_acc > best_acc and not finished:
-                patience = PATIENCE
+            if phase == 'val' and epoch_acc > best_acc:
+                if not finished:
+                    patience = PATIENCE
+                    best_acc_es = epoch_acc
+                    best_epoch_es = epoch
+                    print("best epoch early_stop", epoch)
+                    torch.save(model.state_dict(), "./{}/best_early_stop.pth".format(TRAIN_NAME))
+                print("best epoch in general", epoch)
                 best_acc = epoch_acc
-                best_model_wts = copy.deepcopy(model.state_dict())
-                torch.save(best_model_wts, "./{}/best_valid.pth".format(TRAIN_NAME, epoch))
+                best_epoch = epoch
+                torch.save(model.state_dict(), "./{}/best_valid.pth".format(TRAIN_NAME))
         torch.save(model.state_dict(), "./{}/{}.pth".format(TRAIN_NAME, "final"))
         print(time.time() - start)
         print()
@@ -144,9 +156,9 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
     print('Best val Acc: {:4f}'.format(best_acc))
-
-    # load best model weights
-    model.load_state_dict(best_model_wts)
+    print("best epoch: ", best_epoch)
+    print('Best val acc early_stop: {:4f}'.format(best_acc_es))
+    print("Best epoch early_stop: ", best_epoch_es)
     return model
 
 class BaseBlock(nn.Module):

@@ -16,7 +16,7 @@ torch.manual_seed(0)
 
 BATCH_SIZE = 92
 DATASET = "Cifar"
-TRAIN_NAME = "Cifar_full"
+TRAIN_NAME = "fatality"
 OUT_SIZE = 10
 
 transform = transforms.Compose([
@@ -229,7 +229,7 @@ def evaluate(save_path):
     save_to_csv(results_train, save_path, "interpolation_final.csv")
 
 if __name__ == "__main__":
-    evaluate("./Cifar_full")
+    evaluate(TRAIN_NAME)
 
 
 
