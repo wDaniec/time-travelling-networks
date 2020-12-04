@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 import torchvision
 from torchvision import datasets, models, transforms
+import random
 import time
 import os
 import math
@@ -20,13 +21,13 @@ torch.manual_seed(0)
 
 BATCH_SIZE = 128
 DATASET = "Cifar"
-TRAIN_NAME = "fatality1"
+TRAIN_NAME = "crazy"
 # PATH = "./lilImageNet/best_model_199.pth"
 SEND_NEPTUNE = True
 OUT_SIZE = 10
 CIFAR_FACTOR = 1
-PATIENCE = 2
-NUM_EPOCHS = 30
+PATIENCE = 50
+NUM_EPOCHS = 350
 WEIGHT_DECAY = 0.00004
 MOMENTUM = 0.9
 LEARNING_RATE = 0.1
@@ -49,11 +50,13 @@ else:
                                           transform=transform)
                   for x in ['train', 'val']}
  
+ # reset 20% of the labels
+temp = int(0.2*len(image_datasets["train"]))
+image_datasets["train"].targets[:temp] = [random.randint(0,9) for _ in range(temp)]
 
 dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=BATCH_SIZE,
                                              shuffle=True, num_workers=4)
               for x in ['train', 'val']}
-
 
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 
@@ -98,10 +101,6 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 
             # Iterate over data.
             for idx, (inputs, labels) in enumerate(dataloaders[phase]):
-                #debug
-                if idx == 15:
-                    break
-                #enddebug
                 # print(idx, len(dataloaders[phase]))
                 inputs = inputs.to(device)
                 labels = labels.to(device)
