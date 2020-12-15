@@ -21,7 +21,7 @@ torch.manual_seed(0)
 
 BATCH_SIZE = 128
 DATASET = "Cifar"
-TRAIN_NAME = "crazy"
+TRAIN_NAME = "no_batch_stats"
 # PATH = "./lilImageNet/best_model_199.pth"
 SEND_NEPTUNE = True
 OUT_SIZE = 10
@@ -51,6 +51,7 @@ else:
                   for x in ['train', 'val']}
  
  # reset 20% of the labels
+random.seed(0)
 temp = int(0.2*len(image_datasets["train"]))
 image_datasets["train"].targets[:temp] = [random.randint(0,9) for _ in range(temp)]
 
@@ -182,13 +183,13 @@ class BaseBlock(nn.Module):
         c  = t * input_channel
         # 1x1   point wise conv
         self.conv1 = nn.Conv2d(input_channel, c, kernel_size = 1, bias = False)
-        self.bn1 = nn.BatchNorm2d(c)
+        self.bn1 = nn.BatchNorm2d(c, track_running_stats=False)
         # 3x3   depth wise conv
         self.conv2 = nn.Conv2d(c, c, kernel_size = 3, stride = self.stride, padding = 1, groups = c, bias = False)
-        self.bn2 = nn.BatchNorm2d(c)
+        self.bn2 = nn.BatchNorm2d(c, track_running_stats=False)
         # 1x1   point wise conv
         self.conv3 = nn.Conv2d(c, output_channel, kernel_size = 1, bias = False)
-        self.bn3 = nn.BatchNorm2d(output_channel)
+        self.bn3 = nn.BatchNorm2d(output_channel, track_running_stats=False)
         
 
     def forward(self, inputs):
@@ -209,7 +210,7 @@ class MobileNetV2(nn.Module):
 
         # first conv layer 
         self.conv0 = nn.Conv2d(3, int(32*alpha), kernel_size = 3, stride = 1, padding = 1, bias = False)
-        self.bn0 = nn.BatchNorm2d(int(32*alpha))
+        self.bn0 = nn.BatchNorm2d(int(32*alpha), track_running_stats=False)
 
         # build bottlenecks
         BaseBlock.alpha = alpha
@@ -234,7 +235,7 @@ class MobileNetV2(nn.Module):
 
         # last conv layers and fc layer
         self.conv1 = nn.Conv2d(int(320*alpha), 1280, kernel_size = 1, bias = False)
-        self.bn1 = nn.BatchNorm2d(1280)
+        self.bn1 = nn.BatchNorm2d(1280, track_running_stats=False)
         self.fc = nn.Linear(1280, output_size)
 
         # weights init

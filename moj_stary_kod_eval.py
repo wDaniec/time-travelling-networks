@@ -9,6 +9,7 @@ import os
 import collections
 import pandas as pd
 import copy
+import random
 
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -16,7 +17,7 @@ torch.manual_seed(0)
 
 BATCH_SIZE = 92
 DATASET = "Cifar"
-TRAIN_NAME = "fatality"
+TRAIN_NAME = "crazy"
 OUT_SIZE = 10
 
 transform = transforms.Compose([
@@ -32,6 +33,9 @@ dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=BATC
                                              shuffle=True, num_workers=4)
               for x in ['train', 'valid']}
 
+random.seed(0)
+temp = int(0.2*len(image_datasets["train"]))
+image_datasets["train"].targets[:temp] = [random.randint(0,9) for _ in range(temp)]
 
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'valid']}
 
@@ -152,11 +156,20 @@ class MobileNetV2(nn.Module):
 
         return x
 
+def warm_start(model):
+    for idx, (inputs, labels) in enumerate(dataloaders['train']):
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+        if idx > 150:
+            continue
+        model(inputs)
+
 def test_model(model, d_loader):
     model.train()
     running_corrects = 0
     total = 0
 
+    warm_start(model)
     # Iterate over data.
     for inputs, labels in d_loader:
         inputs = inputs.to(device)
@@ -182,7 +195,7 @@ def calculate_acc(weights):
     
     return {'train': float(results_train), 'valid': float(results_valid)}
 
-def combine_weights(weights_init, weights_end, step=0.05):
+def combine_weights(weights_init, weights_end, step=0.1):
     # print(MobileNet())
     results = {'freq': [], 'train':[], 'valid':[]}
     num_steps = int(1/step)
@@ -194,13 +207,11 @@ def combine_weights(weights_init, weights_end, step=0.05):
         weights_temp = collections.OrderedDict()
 
         for k, _ in weights_init.items():
-            stupid = False
-            for name in ['num_batches_tracked']:
-                if name in k.split('.'):
-                    stupid = True
-                    weights_temp[k] = weights_end[k]
-            if not stupid:
-                weights_temp[k] = (1-freq) * weights_init[k] + freq * weights_end[k]
+            # for name in ['num_batches_tracked']:
+            #     if name in k.split('.'):
+            #         stupid = True
+            #         weights_temp[k] = weights_end[k]
+            weights_temp[k] = (1-freq) * weights_init[k] + freq * weights_end[k]
 
             # print(torch.sum(weights_temp[k]-weights_init[k]))
             weights_temp.move_to_end(k)
@@ -212,6 +223,44 @@ def combine_weights(weights_init, weights_end, step=0.05):
 
     return results
 
+def get_interpolation(weights_init, weights_end, freq):
+    weights_temp = collections.OrderedDict()
+    for k, _ in weights_init.items():
+        weights_temp[k] = (1-freq) * weights_init[k] + freq * weights_end[k]
+        weights_temp.move_to_end(k)
+    return weights_temp
+
+def combine_weights_AB(weights_init, weights_final, weights_val, step1=1, step2=0.1):
+    num_steps1 = int(1/step1)
+    num_steps2 = int(1/step2)
+    results = {'freq1': [], 'freq2':[], 'train':[], 'valid':[]}
+
+    print("step_size: {} | num_of_steps: {}".format(step1, num_steps1))
+    
+    for i in range(1, num_steps1+1):
+        freq1 = i*step1
+        weights_temp_final = get_interpolation(weights_init, weights_final, freq=freq1)
+        results_step = calculate_acc(weights_temp_final)
+        print("Going to Final. freq : {} | acc: {}".format(i*step1, results_step))
+
+        weights_temp_val = get_interpolation(weights_init, weights_val, freq=freq1)
+        results_step = calculate_acc(weights_temp_val)
+        print("Going to Best Val. freq: {} | acc: {}".format(i*step1, results_step))
+
+        for j in range(1, num_steps2+1):
+            freq2 = j*step2
+            weights_temp2 = get_interpolation(weights_temp_final, weights_temp_val, freq=freq2)
+            results_step = calculate_acc(weights_temp2)
+            print("freq1: {} | freq2: {} | acc: {}".format(freq1, freq2, results_step))
+            results['freq1'].append(freq1)
+            results['freq2'].append(freq2)
+            for k, v in results_step.items():
+                results[k].append(v)
+    return results
+    
+
+
+
 def save_to_csv(dict, path, filename):
     df = pd.DataFrame(dict)
     df.to_csv(os.path.join(path, filename))
@@ -219,14 +268,17 @@ def save_to_csv(dict, path, filename):
 def evaluate(save_path):
 
     weights_init = torch.load(os.path.join(save_path, "initial.pth"))
-    weights_val = torch.load(os.path.join(save_path, "best_valid.pth"))
-    results_val = combine_weights(weights_init, weights_val)
-    save_to_csv(results_val, save_path, "interpolation_val.csv")
-
-    weights_init = torch.load(os.path.join(save_path, "initial.pth"))
+    weights_val = torch.load(os.path.join(save_path, "best_early_stop.pth"))
     weights_final = torch.load(os.path.join(save_path, "final.pth"))
-    results_train = combine_weights(weights_init, weights_final)
-    save_to_csv(results_train, save_path, "interpolation_final.csv")
+
+    result_last = combine_weights(weights_final, weights_val)
+    save_to_csv(result_last, save_path, "interpolation_AB_last.csv")
+    # results_total = combine_weights_AB(weights_init, weights_final, weights_val)
+    # save_to_csv(results_total, save_path, "interpolation_AB.csv")
+    # results_val = combine_weights_AB(weights_init, weights_val)
+    # save_to_csv(results_val, save_path, "interpolation_val.csv")
+    # results_train = combine_weights_AB(weights_init, weights_final)
+    # save_to_csv(results_train, save_path, "interpolation_final.csv")
 
 if __name__ == "__main__":
     evaluate(TRAIN_NAME)
