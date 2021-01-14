@@ -12,6 +12,7 @@ import os
 import math
 import copy
 import neptune
+import collections
 import sys
 
 
@@ -21,17 +22,18 @@ torch.manual_seed(0)
 
 BATCH_SIZE = 128
 DATASET = "Cifar"
-TRAIN_NAME = "szalenstwo"
+TRAIN_NAME = "temp"
+PATH_IN = "normal_rs"
 # PATH = "./lilImageNet/best_model_199.pth"
 SEND_NEPTUNE = True
 OUT_SIZE = 10
 CIFAR_FACTOR = 1
-PATIENCE = 0
-NUM_EPOCHS = 250
+NUM_EPOCHS = 30
 WEIGHT_DECAY = 0.00004
 MOMENTUM = 0.9
-LEARNING_RATE = 0.1
-MILESTONES = [50, 110, 200]
+LEARNING_RATE = 0.01
+# MILESTONES = [50, 110, 200]
+MILESTONES = []
 
 if SEND_NEPTUNE:
     neptune.init('andrzejzdobywca/pretrainingpp')
@@ -67,32 +69,44 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(device)
 # device = torch.device("cpu")
 
-def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
-    folder_name = "{}".format(TRAIN_NAME)
-    if not os.path.exists(folder_name):
-        os.mkdir(folder_name)
-    torch.save(model.state_dict(), "./{}/initial.pth".format(TRAIN_NAME))
-    since = time.time()
+def warm_start(model):
+    for idx, (inputs, labels) in enumerate(dataloaders['train']):
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+        if idx > 150:
+            continue
+        model(inputs)
 
+def calculate_weights(weights_orig, weights_swa, num_models):
+    weights_temp = collections.OrderedDict()
+
+    for k, _ in weights_orig.items():
+        weights_temp[k] = weights_swa[k] * num_models + weights_orig[k]
+        weights_temp[k] = weights_temp[k] / (num_models + 1)
+    
+    return weights_temp
+
+def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
     best_acc = 0.0
     best_epoch = 0
-    best_acc_es = 0
-    best_epoch_es = 0
-    acc_avg = 0.0
-    patience = PATIENCE
-    finished = False
 
-    for epoch in range(num_epochs):
-        if not patience:
-            finished = True
-            acc_avg = best_acc_es
-        patience -= 1
+    weights_swa = model.state_dict()
+    model_swa = MobileNetV2(10)
+    model_swa = model_swa.to(device)
+    model_swa.train()
+
+    for epoch in range(1, num_epochs):
         start = time.time()
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
 
         # Each epoch has a training and validation phase
-        for phase in ['train', 'val']:
+        for phase in ['train', 'val', 'val_swa']:
+            # calculate swa
+            if phase == 'val_swa':
+                weights_swa = calculate_weights(model.state_dict(), weights_swa, epoch)
+                model_swa.load_state_dict(weights_swa)
+                warm_start(model_swa)
             if phase == 'train':
                 model.train()  # Set model to training mode
             else:
@@ -101,19 +115,18 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
             running_loss = 0.0
             running_corrects = 0
 
-            # Iterate over data.
-            for idx, (inputs, labels) in enumerate(dataloaders[phase]):
-                # print(idx, len(dataloaders[phase]))
+            d_name = 'train' if phase == 'train' else 'val'
+            for idx, (inputs, labels) in enumerate(dataloaders[d_name]):
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
-                # zero the parameter gradients
                 optimizer.zero_grad()
 
-                # forward
-                # track history if only in train
                 with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
+                    if phase == 'val_swa':
+                        outputs = model_swa(inputs)
+                    else:
+                        outputs = model(inputs)
                     _, preds = torch.max(outputs, 1)
                     loss = criterion(outputs, labels)
 
@@ -128,8 +141,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
             if phase == 'train':
                 scheduler.step()
 
-            epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            epoch_loss = running_loss / dataset_sizes[d_name]
+            epoch_acc = running_corrects.double() / dataset_sizes[d_name]
             print('{} Loss: {:.4f} Acc: {:.4f}'.format(
                 phase, epoch_loss, epoch_acc))
             
@@ -138,31 +151,15 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 neptune.send_metric('{}_acc'.format(phase), epoch_acc)
 
             # deep copy the model
-            if phase == 'val' and epoch % 20 == 0:
-                torch.save(model.state_dict(), "./{}/epoch_.pth".format(TRAIN_NAME, epoch))
             if phase == 'val' and epoch_acc > best_acc:
-                if not finished:
-                    patience = PATIENCE
-                    best_acc_es = epoch_acc
-                    best_epoch_es = epoch
-                    print("best epoch early_stop", epoch)
-                    torch.save(model.state_dict(), "./{}/best_early_stop.pth".format(TRAIN_NAME))
                 print("best epoch in general", epoch)
                 best_acc = epoch_acc
                 best_epoch = epoch
-                torch.save(model.state_dict(), "./{}/best_valid.pth".format(TRAIN_NAME))
-            if phase == 'val' and finished:
-                num_best = epoch - best_epoch_es + 1
-                acc_avg = ((acc_avg * num_best) + epoch_acc) / (num_best + 1)
-                print("{:4} | {:4f} | {:4f}".format(acc_avg, epoch_acc, num_best))
-        torch.save(model.state_dict(), "./{}/{}.pth".format(TRAIN_NAME, "final"))
         print(time.time() - start)
         print()
 
-    time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
-    print('Average acc after early stop: {:4f}'.format(acc_avg))
     print('Best val Acc: {:4f}'.format(best_acc))
     print("best epoch: ", best_epoch)
     print('Best val acc early_stop: {:4f}'.format(best_acc_es))
@@ -290,6 +287,9 @@ class MobileNetV2(nn.Module):
 #     param.requires_grad = False
 
 model_ft = MobileNetV2(10)
+warm_weights = torch.load(os.path.join(PATH_IN, "best_early_stop.pth"))
+model_ft.load_state_dict(copy.deepcopy(warm_weights))
+
 model_ft = model_ft.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer_ft = optim.SGD(model_ft.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, momentum = MOMENTUM)

@@ -13,80 +13,96 @@ import math
 import copy
 import neptune
 import sys
-
+from torch.utils.data.sampler import SubsetRandomSampler
 
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 torch.manual_seed(0)
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 DATASET = "Cifar"
-TRAIN_NAME = "szalenstwo"
+TRAIN_NAME = "warm_start"
 # PATH = "./lilImageNet/best_model_199.pth"
 SEND_NEPTUNE = True
 OUT_SIZE = 10
 CIFAR_FACTOR = 1
 PATIENCE = 0
-NUM_EPOCHS = 250
+NUM_EPOCHS = 150
 WEIGHT_DECAY = 0.00004
 MOMENTUM = 0.9
-LEARNING_RATE = 0.1
-MILESTONES = [50, 110, 200]
+LEARNING_RATE = 0.2
+MILESTONES = [30, 70, 110]
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
 if SEND_NEPTUNE:
     neptune.init('andrzejzdobywca/pretrainingpp')
     neptune.create_experiment(name=TRAIN_NAME)
 
-transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
+def setup_half_loaders():
+    transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
 
-if DATASET == "Cifar":
-    image_datasets = {'train': torchvision.datasets.CIFAR10(root='./data_dir_cifar', train=True, download=True, transform=transform), 
-                'val': torchvision.datasets.CIFAR10(root='./data_dir_cifar', train=False, download=True, transform=transform)}
-else:
-    image_datasets = {x: datasets.ImageFolder(os.path.join('~/data/lilImageNet', x),
-                                          transform=transform)
-                  for x in ['train', 'val']}
- 
-#  # reset 20% of the labels
-# random.seed(0)
-# temp = int(0.2*len(image_datasets["train"]))
-# image_datasets["train"].targets[:temp] = [random.randint(0,9) for _ in range(temp)]
+    if DATASET == "Cifar":
+        image_datasets = {'train': torchvision.datasets.CIFAR10(root='./data_dir_cifar', train=True, download=True, transform=transform), 
+                    'val': torchvision.datasets.CIFAR10(root='./data_dir_cifar', train=False, download=True, transform=transform)}
+    else:
+        image_datasets = {x: datasets.ImageFolder(os.path.join('~/data/lilImageNet', x),
+                                            transform=transform)
+                    for x in ['train', 'val']}
+    full_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+    half_sizes = {'train': int(0.5*full_sizes['train']), 'val': full_sizes['val']}
 
-dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=BATCH_SIZE,
-                                             shuffle=True, num_workers=4)
-              for x in ['train', 'val']}
+    subset_indices = torch.randperm(full_sizes['train'])[:half_sizes['train']]
 
-dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+    half_dataloaders = {'train': torch.utils.data.DataLoader(image_datasets['train'], batch_size=BATCH_SIZE,
+                                    shuffle=False, num_workers=4, sampler=SubsetRandomSampler(subset_indices))}
+    half_dataloaders['val'] = torch.utils.data.DataLoader(image_datasets['val'], batch_size=BATCH_SIZE,
+                                                shuffle=True, num_workers=4)
 
-print('val length:', len(image_datasets['val']))
-print('train length:', len(image_datasets['train']))
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(device)
+    return half_dataloaders, half_sizes
+
+def setup_full_loaders():
+    transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+
+    if DATASET == "Cifar":
+        image_datasets = {'train': torchvision.datasets.CIFAR10(root='./data_dir_cifar', train=True, download=True, transform=transform), 
+                    'val': torchvision.datasets.CIFAR10(root='./data_dir_cifar', train=False, download=True, transform=transform)}
+    else:
+        image_datasets = {x: datasets.ImageFolder(os.path.join('~/data/lilImageNet', x),
+                                            transform=transform)
+                    for x in ['train', 'val']}
+    full_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+    
+    full_dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=BATCH_SIZE,
+                                                shuffle=True, num_workers=4)
+                for x in ['train', 'val']}
+    
+
+    return full_dataloaders, full_sizes
+
 # device = torch.device("cpu")
 
-def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+def setup():
     folder_name = "{}".format(TRAIN_NAME)
     if not os.path.exists(folder_name):
         os.mkdir(folder_name)
+
+
+def train_phase1(model, criterion, optimizer, scheduler, t_dataloaders, t_sizes, num_epochs=25):
     torch.save(model.state_dict(), "./{}/initial.pth".format(TRAIN_NAME))
     since = time.time()
 
     best_acc = 0.0
     best_epoch = 0
-    best_acc_es = 0
-    best_epoch_es = 0
-    acc_avg = 0.0
-    patience = PATIENCE
-    finished = False
 
     for epoch in range(num_epochs):
-        if not patience:
-            finished = True
-            acc_avg = best_acc_es
-        patience -= 1
         start = time.time()
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
@@ -101,35 +117,27 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
             running_loss = 0.0
             running_corrects = 0
 
-            # Iterate over data.
-            for idx, (inputs, labels) in enumerate(dataloaders[phase]):
-                # print(idx, len(dataloaders[phase]))
+            for idx, (inputs, labels) in enumerate(t_dataloaders[phase]):
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
-                # zero the parameter gradients
                 optimizer.zero_grad()
-
-                # forward
-                # track history if only in train
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
                     _, preds = torch.max(outputs, 1)
                     loss = criterion(outputs, labels)
 
-                    # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
                         optimizer.step()
 
-                # statistics
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
             if phase == 'train':
                 scheduler.step()
 
-            epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            epoch_loss = running_loss / t_sizes[phase]
+            epoch_acc = running_corrects.double() / t_sizes[phase]
             print('{} Loss: {:.4f} Acc: {:.4f}'.format(
                 phase, epoch_loss, epoch_acc))
             
@@ -138,36 +146,90 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 neptune.send_metric('{}_acc'.format(phase), epoch_acc)
 
             # deep copy the model
-            if phase == 'val' and epoch % 20 == 0:
-                torch.save(model.state_dict(), "./{}/epoch_.pth".format(TRAIN_NAME, epoch))
             if phase == 'val' and epoch_acc > best_acc:
-                if not finished:
-                    patience = PATIENCE
-                    best_acc_es = epoch_acc
-                    best_epoch_es = epoch
-                    print("best epoch early_stop", epoch)
-                    torch.save(model.state_dict(), "./{}/best_early_stop.pth".format(TRAIN_NAME))
                 print("best epoch in general", epoch)
                 best_acc = epoch_acc
                 best_epoch = epoch
-                torch.save(model.state_dict(), "./{}/best_valid.pth".format(TRAIN_NAME))
-            if phase == 'val' and finished:
-                num_best = epoch - best_epoch_es + 1
-                acc_avg = ((acc_avg * num_best) + epoch_acc) / (num_best + 1)
-                print("{:4} | {:4f} | {:4f}".format(acc_avg, epoch_acc, num_best))
-        torch.save(model.state_dict(), "./{}/{}.pth".format(TRAIN_NAME, "final"))
+                torch.save(model.state_dict(), "./{}/best_valid_phase1.pth".format(TRAIN_NAME))
+        torch.save(model.state_dict(), "./{}/{}.pth".format(TRAIN_NAME, "final_phase1"))
         print(time.time() - start)
         print()
 
     time_elapsed = time.time() - since
-    print('Training complete in {:.0f}m {:.0f}s'.format(
+    print('Training phase 1 completed in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
-    print('Average acc after early stop: {:4f}'.format(acc_avg))
     print('Best val Acc: {:4f}'.format(best_acc))
     print("best epoch: ", best_epoch)
-    print('Best val acc early_stop: {:4f}'.format(best_acc_es))
-    print("Best epoch early_stop: ", best_epoch_es)
     return model
+
+def train_phase2(model, criterion, optimizer, scheduler, t_dataloaders, t_sizes, num_epochs=25):
+    torch.save(model.state_dict(), "./{}/initial.pth".format(TRAIN_NAME))
+    since = time.time()
+
+    best_acc = 0.0
+    best_epoch = 0
+
+    for epoch in range(num_epochs):
+        start = time.time()
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()  # Set model to training mode
+            else:
+                model.eval()   # Set model to evaluate mode
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            for idx, (inputs, labels) in enumerate(t_dataloaders[phase]):
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                optimizer.zero_grad()
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    loss = criterion(outputs, labels)
+
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
+            if phase == 'train':
+                scheduler.step()
+
+            epoch_loss = running_loss / t_sizes[phase]
+            epoch_acc = running_corrects.double() / t_sizes[phase]
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(
+                phase, epoch_loss, epoch_acc))
+            
+            if SEND_NEPTUNE:
+                neptune.send_metric('{}_loss'.format(phase), epoch_loss)
+                neptune.send_metric('{}_acc'.format(phase), epoch_acc)
+
+            # deep copy the model
+            if phase == 'val' and epoch_acc > best_acc:
+                print("best epoch in general", epoch)
+                best_acc = epoch_acc
+                best_epoch = epoch
+                torch.save(model.state_dict(), "./{}/best_valid_phase2.pth".format(TRAIN_NAME))
+        torch.save(model.state_dict(), "./{}/{}.pth".format(TRAIN_NAME, "final_phase2"))
+        print(time.time() - start)
+        print()
+
+    time_elapsed = time.time() - since
+    print('Training phase 2 completed in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+    print("best epoch: ", best_epoch)
+    return model
+
+
 
 class BaseBlock(nn.Module):
     alpha = 1
@@ -283,21 +345,20 @@ class MobileNetV2(nn.Module):
         return x
 
 
-
-# model_ft.classifier[1] = nn.Linear(num_ftrs, 100)
-# model_ft.load_state_dict(torch.load(PATH))
-# for param in model_ft.parameters():
-#     param.requires_grad = False
-
 model_ft = MobileNetV2(10)
 model_ft = model_ft.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer_ft = optim.SGD(model_ft.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, momentum = MOMENTUM)
-exp_lr_scheduler = lr_scheduler.MultiStepLR(optimizer_ft, milestones=MILESTONES, gamma=0.1)
+exp_lr_scheduler1 = lr_scheduler.MultiStepLR(optimizer_ft, milestones=MILESTONES, gamma=0.1)
+exp_lr_scheduler2 = lr_scheduler.MultiStepLR(optimizer_ft, milestones=MILESTONES, gamma=0.1)
 
 # exp_lr_scheduler jest wykomentowany!
-model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
-                       num_epochs=NUM_EPOCHS)
+setup()
+half_dataloaders, half_sizes = setup_half_loaders()
+full_dataloaders, full_sizes = setup_full_loaders()
+model_ft = train_phase1(model_ft, criterion, optimizer_ft, exp_lr_scheduler1, half_dataloaders, half_sizes, num_epochs=NUM_EPOCHS)
+model_ft = train_phase2(model_ft, criterion, optimizer_ft, exp_lr_scheduler2, full_dataloaders, full_sizes, num_epochs=NUM_EPOCHS)
+
 if SEND_NEPTUNE:
     neptune.stop()
     sys.exit()
